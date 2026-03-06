@@ -1,4 +1,4 @@
-"""CLI entrypoint for pg-db2-git-sync."""
+"""CLI entrypoint for pg-db2-git-sync. Repo path is dynamic: use --repo-path or set PG_DB2_GIT_SYNC_REPO_PATH."""
 
 from pathlib import Path
 from typing import Optional
@@ -12,6 +12,7 @@ from pg_db2_git_sync import (
     validate_before_push,
     __version__,
 )
+from pg_db2_git_sync.config import get_config, resolve_repo_path
 
 app = typer.Typer(
     name="pg-db2-git-sync",
@@ -34,12 +35,17 @@ def main(
 
 @app.command()
 def discover(
-    repo_path: Path = typer.Argument(..., help="Path to Git repository (e.g. satish chauhan-database-migration)"),
-    env: str = typer.Option("non_prod", "--env", "-e", help="Environment: non_prod or prod"),
+    repo_path: Optional[Path] = typer.Argument(None, help="Path to Git repo (optional if PG_DB2_GIT_SYNC_REPO_PATH is set)"),
+    env: Optional[str] = typer.Option(None, "--env", "-e", help="Environment: non_prod or prod"),
     db_name: Optional[str] = typer.Option(None, "--db-name", "-d", help="Filter by database name (e.g. D_ACO)"),
 ) -> None:
     """List server folders under target_ddl/<env>/<db_name>/."""
-    repo_path = Path(repo_path)
+    resolved = resolve_repo_path(repo_path)
+    if resolved is None:
+        typer.echo("Error: Set repo path via argument or PG_DB2_GIT_SYNC_REPO_PATH (env/.env)", err=True)
+        raise typer.Exit(1)
+    repo_path = resolved
+    env = env or get_config().default_env
     if not repo_path.is_dir():
         typer.echo(f"Error: Not a directory: {repo_path}", err=True)
         raise typer.Exit(1)
@@ -53,14 +59,18 @@ def discover(
 
 @app.command()
 def sync(
-    repo_path: Path = typer.Argument(..., help="Path to Git repository"),
     server_folder: Path = typer.Argument(..., help="Path to server folder inside repo (e.g. target_ddl/non_prod/D_ACO/SS_SLD_DB22U)"),
+    repo_path: Optional[Path] = typer.Option(None, "--repo-path", "-r", help="Path to Git repo (optional if PG_DB2_GIT_SYNC_REPO_PATH is set)"),
     source_folder: Optional[Path] = typer.Option(None, "--source-folder", "-s", help="Local folder to copy from before commit"),
     message: str = typer.Option("Update DDL", "--message", "-m", help="Commit message"),
     no_validate: bool = typer.Option(False, "--no-validate", help="Skip validation before commit"),
 ) -> None:
     """Sync files into repo server folder and commit. Optionally copy from --source-folder first."""
-    repo_path = Path(repo_path)
+    resolved = resolve_repo_path(repo_path)
+    if resolved is None:
+        typer.echo("Error: Set repo path via --repo-path or PG_DB2_GIT_SYNC_REPO_PATH (env/.env)", err=True)
+        raise typer.Exit(1)
+    repo_path = resolved
     server_folder_path = Path(server_folder)
     if not server_folder_path.is_absolute():
         server_folder_path = (repo_path / server_folder_path).resolve()
@@ -80,11 +90,15 @@ def sync(
 
 @app.command()
 def validate(
-    repo_path: Path = typer.Argument(..., help="Path to Git repository"),
+    repo_path: Optional[Path] = typer.Argument(None, help="Path to Git repo (optional if PG_DB2_GIT_SYNC_REPO_PATH is set)"),
     allow_dirty: bool = typer.Option(False, "--allow-dirty", help="Consider valid even with unstaged/untracked changes"),
 ) -> None:
     """Validate repo state before push (e.g. clean working tree)."""
-    repo_path = Path(repo_path)
+    resolved = resolve_repo_path(repo_path)
+    if resolved is None:
+        typer.echo("Error: Set repo path via argument or PG_DB2_GIT_SYNC_REPO_PATH (env/.env)", err=True)
+        raise typer.Exit(1)
+    repo_path = resolved
     res = validate_before_push(
         repo_path,
         require_clean_working_tree=not allow_dirty,
@@ -103,10 +117,14 @@ def validate(
 
 @app.command()
 def read_sql(
-    folder_path: Path = typer.Argument(..., help="Path to server folder containing SQL files"),
+    folder_path: Path = typer.Argument(..., help="Path to server folder (or relative to repo if PG_DB2_GIT_SYNC_REPO_PATH set)"),
 ) -> None:
     """List SQL files in folder (ordered by 01_, 02_, ...)."""
     folder_path = Path(folder_path)
+    if not folder_path.is_absolute():
+        resolved_repo = resolve_repo_path(None)
+        if resolved_repo is not None:
+            folder_path = (resolved_repo / folder_path).resolve()
     if not folder_path.is_dir():
         typer.echo(f"Error: Not a directory: {folder_path}", err=True)
         raise typer.Exit(1)

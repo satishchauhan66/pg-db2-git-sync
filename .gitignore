@@ -36,14 +36,34 @@ env/
 # Environment and secrets
 .env
 .env.local
+.env.*
+!.env.example
 *.pem
+*.key
+*.pfx
+*.crt
+*.cer
+*.token
+*token*.json
+
+# Azure token cache files
+.azure_token_cache.json
+.azure_token_cache_token.json
 
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
 nox/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
 
 # OS
 .DS_Store

@@ -25,6 +25,40 @@ def _normalize_server_name(name: str) -> str:
     return name.replace("-", "_").strip()
 
 
+# Always include both envs when listing deploy targets
+_DEFAULT_ENVS = ("non_prod", "prod")
+
+
+def list_environments_impl(
+    repo_path: Path,
+    target_ddl_base: str = "target_ddl",
+) -> List[str]:
+    """List environment names (non_prod, prod, and any others under target_ddl/)."""
+    repo_path = Path(repo_path).resolve()
+    if not repo_path.is_dir() or not (repo_path / ".git").exists():
+        return []
+    base = repo_path / target_ddl_base
+    if not base.is_dir():
+        return []
+    found = {d.name for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")}
+    return sorted(set(_DEFAULT_ENVS) | found)
+
+
+def list_databases_impl(
+    repo_path: Path,
+    env: str,
+    target_ddl_base: str = "target_ddl",
+) -> List[str]:
+    """List database names under target_ddl/<env>/."""
+    repo_path = Path(repo_path).resolve()
+    if not repo_path.is_dir() or not (repo_path / ".git").exists():
+        return []
+    base = repo_path / target_ddl_base / env
+    if not base.is_dir():
+        return []
+    return [d.name for d in base.iterdir() if d.is_dir() and not d.name.startswith(".")]
+
+
 def discover_server_folders_impl(
     repo_path: Path,
     env: str,

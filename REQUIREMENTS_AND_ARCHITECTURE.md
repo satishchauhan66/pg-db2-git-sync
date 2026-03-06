@@ -30,9 +30,36 @@ This document describes the requirements and proposed architecture for a **Pytho
 
 **Typical user flow:** The user has a **server folder** (e.g. `SS_SLD_DB22U`) that contains **updated SQL scripts**. They want to either **push** those changes into the Git repo (check-in/commit/push) and/or **apply** them to the destination database. DB auth and apply will be handled by existing modules later; this document focuses on **requirements and repo structure**.
 
+### 1.2 Play branch (feature-playground)
+
+- **GitLab repo**: [66degrees-database-migration](https://gitlab.com/pgforsta/user-groups/66degrees/66degrees-database-migration) (private).
+- **Play branch**: `feature-playground` — all “play” and deploy flows use this branch. Users clone the repo (e.g. via SSH or PAT), checkout `feature-playground`, and point the tool at the local clone path.
+
 ---
 
-## 2. Goals
+## 2. Deploy workflow (end-to-end flow)
+
+The tool supports the following **deploy** flow. Destination is always **Azure SQL Server**; most logins use **MFA** (two or more login options). On execution errors, **continue** and collect errors; return the **list of errors at the end**.
+
+| Step | Action |
+|------|--------|
+| 1 | **Connect to Git** — Use local clone of repo (branch `feature-playground`). |
+| 2 | **List DBs** — List databases available under `target_ddl/<env>/` (database names). |
+| 3 | **Select environment** — User chooses environment (e.g. `non_prod`, `prod`). |
+| 4 | **Select database_name** — User chooses database (e.g. `D_ACO`). |
+| 5 | **Select server_folder** — User chooses server folder (e.g. `SS_SLD_DB22U`). |
+| 6 | **List all SQL files** — List SQL files in selected server folder (ordered 01_, 02_, …). |
+| 7 | **User selects which files to execute** — User decides which of the listed SQL files to deploy. |
+| 8 | **Connect to destination** — Connect to **Azure SQL Server** (2+ login options; most use **MFA**). |
+| 9 | **Select correct database** — User or config selects the target database on Azure SQL. |
+| 10 | **Deploy selected scripts** — Execute only the user-selected SQL files in order. |
+| 11 | **Error handling** — On error for a specific file/line: record the error, **continue** with remaining scripts. At the end, **return a list of errors** (file, line, message). Success count and error list are both returned. |
+
+**Error behaviour:** Continue on error; do not stop the whole run. Return a list of errors at the end (e.g. file name, line number if available, error message).
+
+---
+
+## 3. Goals
 
 - **Automate** the workflow of checking SQL files (tables, indexes, etc.) into a Git repository.
 - **Scale** beyond manual script generation and one-off local runs.
@@ -42,7 +69,7 @@ This document describes the requirements and proposed architecture for a **Pytho
 
 ---
 
-## 3. Repository Structure (target_ddl)
+## 4. Repository Structure (target_ddl)
 
 Aligned with **satish chauhan-database-migration** repo:
 
@@ -71,9 +98,9 @@ target_ddl/
 
 ---
 
-## 4. Functional Requirements
+## 5. Functional Requirements
 
-### 4.1 User Inputs
+### 5.1 User Inputs
 
 | Requirement | Description |
 |-------------|-------------|
@@ -82,7 +109,7 @@ target_ddl/
 | **Source folder discovery** | The tool lists **available server folders** from the repo (e.g. under `target_ddl/non_prod/<db_name>/` or for a chosen database). User selects which folder(s) to work with. Optionally, user may provide **database name** and **environment** (non_prod/prod) to narrow the list. |
 | **Optional: local folder** | For **check-in** flows, user may provide a **local folder path** (outside the repo) that contains updated SQL files; the tool will copy/sync these into the appropriate server folder in the repo and then commit. |
 
-### 4.2 Git Operations
+### 5.2 Git Operations
 
 | Requirement | Description |
 |-------------|-------------|
@@ -92,17 +119,18 @@ target_ddl/
 | **Conflict avoidance** | Design for **minimizing conflicts** (e.g. one server folder per change set, validation before push, optional branch strategy). |
 | **Validation before push** | **Validate** state or content before pushing to the remote (e.g. lint, dry-run, conflict check, clean working tree). |
 
-### 4.3 Database Operations (requirements only; implementation via existing modules later)
+### 5.3 Database Operations (Azure SQL, MFA, continue-on-error)
 
 | Requirement | Description |
 |-------------|-------------|
-| **Apply changes to database** | **Apply** the SQL from the selected server folder(s) to the destination database in the correct order (schemas → tables → constraints → indexes → triggers → procedures/functions). |
-| **Multi-factor authentication (MFA)** | Support **MFA** when connecting or executing (e.g. via existing auth modules; interactive prompts or token-based). |
-| **Local / target application** | Changes are applied to the specified target (e.g. Dev/UAT identified by server folder suffix D/U/Q) in a controlled way. |
+| **Apply changes to database** | **Apply** only the **user-selected** SQL files to the destination in order. Destination is always **Azure SQL Server**. |
+| **Multi-factor authentication (MFA)** | Support **MFA** (two or more login options); most connections use MFA. |
+| **Continue on error** | On error for a file/line: record error, **continue** with remaining scripts. |
+| **Return list of errors at end** | Return a list of errors (e.g. file name, line number, message). Report success count and full error list at the end. |
 
-*DB connection and execution will be implemented later using existing auth/apply modules; this document focuses on repo structure and Git/sync requirements.*
+*DB connection and execution to be implemented with existing auth/apply modules; Azure SQL + MFA + per-error reporting are required.*
 
-### 4.4 Package & Usability
+### 5.4 Package & Usability
 
 | Requirement | Description |
 |-------------|-------------|
@@ -112,7 +140,7 @@ target_ddl/
 
 ---
 
-## 5. Non-Functional Requirements
+## 6. Non-Functional Requirements
 
 - **Scalable**: Avoid manual, repetitive script generation; support multiple databases/folders and future extensions.
 - **Safe**: Validation and optional dry-run before committing or pushing; clear feedback on errors.
@@ -121,9 +149,9 @@ target_ddl/
 
 ---
 
-## 6. Proposed Architecture
+## 7. Proposed Architecture
 
-### 6.1 High-Level Components
+### 7.1 High-Level Components
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -146,7 +174,7 @@ target_ddl/
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.2 Module Layout (Proposed)
+### 7.2 Module Layout (Proposed)
 
 ```
 pg_db2_git_sync/
@@ -168,7 +196,7 @@ pg_db2_git_sync/
 └── exceptions.py         # Custom exceptions
 ```
 
-### 6.3 Public API (Proposed)
+### 7.3 Public API (Proposed)
 
 Functions other teams can call after `pip install`:
 
@@ -182,14 +210,14 @@ Functions other teams can call after `pip install`:
 
 (Exact signatures can be refined; the idea is a small, stable set of entrypoints.)
 
-### 6.4 Configuration
+### 7.4 Configuration
 
 - **Repo path**: Path to cloned `satish chauhan-database-migration` (or equivalent); can be argument or config/env.
 - **Target DDL base**: `target_ddl` under repo root; environments `non_prod`, `prod`; server folder naming (hyphen/underscore) configurable or normalized.
 - **Database**: Connection params and MFA method from config/env; integration with existing auth modules later.
 - (Folder conventions are defined by the Target DDL structure above.) (e.g. `databases/<name>/tables/`, `databases/<name>/indexes/`) so that “source folders” can be discovered consistently.
 
-### 6.5 Git & Validation Flow
+### 7.5 Git & Validation Flow
 
 1. **Discover** server folders under `target_ddl/<env>/<db_name>/` (or from user-provided path).
 2. **Read** SQL from the selected server folder (and/or from user-provided local folder for check-in).
@@ -198,14 +226,14 @@ Functions other teams can call after `pip install`:
 5. **Pre-push**: Run `validate_before_push()` (e.g. clean state, no conflicts with remote).
 6. **Push**: Only after user or caller confirms (CLI prompt or explicit API flag).
 
-### 6.6 Database & MFA Flow
+### 7.6 Database & MFA Flow
 
 1. **Resolve connection config** (from config/env or server folder → environment mapping).
 2. **If MFA required**: Use **existing auth modules** (callback or interactive prompt).
 3. **Establish connection** and **apply** SQL in order (01_schema → 02_table → …).
 4. **Report** success/failure per file or batch.
 
-### 6.7 Technology Choices (Proposed)
+### 7.7 Technology Choices (Proposed)
 
 | Concern | Option |
 |---------|--------|
@@ -217,7 +245,7 @@ Functions other teams can call after `pip install`:
 
 ---
 
-## 7. Out of Scope (Initial Version)
+## 8. Out of Scope (Initial Version)
 
 - Web UI or dashboard.
 - Full conflict resolution (e.g. 3-way merge); focus on validation and clear reporting.
@@ -225,7 +253,7 @@ Functions other teams can call after `pip install`:
 
 ---
 
-## 8. Success Criteria
+## 9. Success Criteria
 
 - Another team can **install** the package and **call** at least: discover folders, read SQL, sync to Git (with validation), and apply to DB with MFA.
 - **Validation** runs before push and is clearly exposed (CLI + API).
@@ -233,7 +261,7 @@ Functions other teams can call after `pip install`:
 
 ---
 
-## 9. Next Steps
+## 10. Next Steps
 
 1. **Package setup**: Create package layout, `pyproject.toml`, and minimal `pg_db2_git_sync/__init__.py` with the proposed API stubs.
 2. **Config & CLI**: Implement config loading and CLI skeleton (prompts for repo path, environment, database name, server folder e.g. `SS_SLD_DB22U`, optional local folder for check-in).
