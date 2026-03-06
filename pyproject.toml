@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pg-db2-git-sync"
+version = "0.1.0"
+description = "Sync SQL DDL from folders to Git (satish chauhan-database-migration target_ddl) and apply to databases with MFA support"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "satish chauhan" }]
+keywords = ["git", "sql", "ddl", "database", "migration", "sync"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "GitPython>=3.1.0",
+    "typer>=0.9.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+pg-db2-git-sync = "pg_db2_git_sync.cli:app"
+
+[project.urls]
+Repository = "https://github.com/satishchauhan66/pg-db2-git-sync"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pg_db2_git_sync*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
