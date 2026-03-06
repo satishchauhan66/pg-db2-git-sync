@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 import re
 import struct
-import sys
 from typing import Callable, List, Optional, Union
 
 from pydantic import BaseModel
@@ -23,7 +22,6 @@ class DbConfig(BaseModel):
     tenant_id: Optional[str] = None
     token_cache_file: Optional[str] = None
     odbc_driver: str = "ODBC Driver 18 for SQL Server"
-    migration_tool_path: Optional[str] = None
 
 
 class DeployError(BaseModel):
@@ -242,31 +240,49 @@ def _guess_error_line(message: str) -> Optional[int]:
 
 def _get_cached_azure_token(connection_config: DbConfig) -> Optional[str]:
     """
-    Load token from external azure_migration_tool.azure_token_cache if available.
-    Falls back to None when module/path is unavailable.
+    Get Azure SQL access token using MSAL directly (no external project dependency).
+    Uses persistent token cache and interactive MFA when silent token is unavailable.
     """
-    migration_tool_path = (
-        connection_config.migration_tool_path
-        or os.environ.get("AZURE_MIGRATION_TOOL_PATH")
-        or r"C:\Users\chauhs\Desktop\program\github\azure_migration_tool"
-    )
-    if migration_tool_path and migration_tool_path not in sys.path:
-        sys.path.insert(0, migration_tool_path)
     try:
-        from azure_migration_tool.azure_token_cache import get_cached_token  # type: ignore
+        from msal import PublicClientApplication, SerializableTokenCache  # type: ignore
     except Exception:
         return None
 
-    try:
-        token = get_cached_token(
-            username=connection_config.user,
-            tenant_id=connection_config.tenant_id,
-            cache_file=connection_config.token_cache_file,
-            refresh_if_expiring_soon=True,
-        )
-        return token
-    except Exception:
+    client_id = os.environ.get("AZURE_CLIENT_ID", "04b07795-8ddb-461a-bbee-02f9e1bf7b46")
+    scope = ["https://database.windows.net/.default"]
+    authority = (
+        f"https://login.microsoftonline.com/{connection_config.tenant_id}"
+        if connection_config.tenant_id
+        else "https://login.microsoftonline.com/common"
+    )
+
+    cache_path = connection_config.token_cache_file or str(Path.home() / ".pg_db2_git_sync_msal_cache.json")
+    cache = SerializableTokenCache()
+    cache_file = Path(cache_path)
+    if cache_file.exists():
+        try:
+            cache.deserialize(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    app = PublicClientApplication(client_id=client_id, authority=authority, token_cache=cache)
+    accounts = app.get_accounts(username=connection_config.user) or app.get_accounts()
+    result = None
+    if accounts:
+        result = app.acquire_token_silent(scopes=scope, account=accounts[0])
+    if not result or "access_token" not in result:
+        # Interactive MFA login fallback
+        result = app.acquire_token_interactive(scopes=scope, login_hint=connection_config.user)
+    if not result or "access_token" not in result:
         return None
+
+    if cache.has_state_changed:
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(cache.serialize(), encoding="utf-8")
+        except Exception:
+            pass
+    return result["access_token"]
 
 
 def _filter_by_restore_objects(files: List[SqlFile], restore_objects: List[str]) -> List[SqlFile]:
