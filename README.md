@@ -111,6 +111,13 @@ validation = validate_before_push(repo)
 1. **Connect to Git (URL + token + branch) and list all DBs** — user selects the database/target to deploy to.
 2. **Deploy to destination** — run selected SQL; errors are **mapped to script and error message**.
 
+Quick steps:
+
+1. `pip install -e .`
+2. Set token: `set GIT_TOKEN=...` (Windows CMD) or `$env:GIT_TOKEN="..."` (PowerShell)
+3. Run `python test_playground.py`
+4. Change `TARGET_INDEX` in `test_playground.py` to deploy a different target
+
 ```python
 from pathlib import Path
 from pg_db2_git_sync import (
