@@ -47,12 +47,14 @@ def apply_to_database(
     mfa_callback: Optional[Callable[[], str]] = None,
     schema_name_only: Optional[str] = None,
     target_schema: Optional[str] = None,
+    ignore_already_exists: bool = True,
 ) -> ApplyResult:
     """
     Apply SQL to database in order (01_schema → 02_table → …).
     MFA via mfa_callback (e.g. return token).
     If schema_name_only is set (e.g. "dbo"), execute only CREATE SCHEMA [dbo] statements.
     If target_schema is set (e.g. "dbo"), execute only statements that target that schema.
+    If ignore_already_exists is True, "object already exists" errors are skipped.
     """
     if isinstance(sql_folder_or_files, Path):
         files = read_sql_from_folder(sql_folder_or_files)
@@ -144,6 +146,9 @@ def apply_to_database(
                     cursor.execute(stmt)
                 except Exception as e:
                     err_msg = str(e)
+                    if ignore_already_exists and _is_already_exists_error(err_msg):
+                        # Treat idempotent create conflicts as non-fatal.
+                        continue
                     errors.append(
                         DeployError(
                             file_name=file_name,
@@ -238,6 +243,17 @@ def _guess_error_line(message: str) -> Optional[int]:
     return None
 
 
+def _is_already_exists_error(message: str) -> bool:
+    """Detect SQL Server duplicate-object errors (e.g. 42S01 / 2714)."""
+    m = message.lower()
+    return (
+        "42s01" in m
+        or "(2714)" in m
+        or "already an object named" in m
+        or "already exists" in m
+    )
+
+
 def _get_cached_azure_token(connection_config: DbConfig) -> Optional[str]:
     """
     Get Azure SQL access token using MSAL directly (no external project dependency).
@@ -317,6 +333,7 @@ def deploy_to_destination(
     restore_objects: Optional[List[str]] = None,
     schema_name_only: Optional[str] = None,
     target_schema: Optional[str] = None,
+    ignore_already_exists: bool = True,
     mfa_callback: Optional[Callable[[], str]] = None,
     target_ddl_base: str = "target_ddl",
 ) -> ApplyResult:
@@ -326,6 +343,7 @@ def deploy_to_destination(
     If "table" is requested, schema file(s) are automatically included first.
     schema_name_only: if set (e.g. "dbo"), execute only CREATE SCHEMA [dbo] statements.
     target_schema: if set (e.g. "dbo"), execute only statements for that schema.
+    ignore_already_exists: if True, skip duplicate-object creation errors.
     Errors are mapped to script (file_name) and error message; returned at end (continue on error).
     """
     repo_path = Path(repo_path).resolve()
@@ -356,5 +374,6 @@ def deploy_to_destination(
         mfa_callback=mfa_callback,
         schema_name_only=schema_name_only,
         target_schema=target_schema,
+        ignore_already_exists=ignore_already_exists,
     )
     return result

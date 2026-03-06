@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import git
 from git.repo.base import Repo
@@ -19,7 +19,8 @@ def _url_with_token(url: str, token: str) -> str:
     netloc = parsed.hostname or ""
     if parsed.port:
         netloc += f":{parsed.port}"
-    auth = f"oauth2:{token}" if token else ""
+    encoded_token = quote(token, safe="") if token else ""
+    auth = f"oauth2:{encoded_token}" if encoded_token else ""
     new_netloc = f"{auth}@{netloc}" if auth else netloc
     return urlunparse(parsed._replace(netloc=new_netloc))
 
@@ -36,17 +37,22 @@ def clone_repo(
     """
     target_dir = Path(target_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
+    url_with_token = _url_with_token(url, token)
     # GitPython clone_from expects the parent dir to exist; clone creates a dir from repo name.
     # To clone into target_dir directly we use target_dir as the path (clone_from(url, path) puts .git inside path).
     if (target_dir / ".git").exists():
         repo = Repo(target_dir)
         try:
-            repo.remotes.origin.fetch()
-            repo.git.checkout(branch_name)
+            # Existing clone path: fetch using tokenized URL explicitly so auth always works.
+            repo.git.fetch(url_with_token, branch_name)
+            # Reset/update local branch to fetched head.
+            repo.git.checkout("-B", branch_name, "FETCH_HEAD")
+            # Ensure origin URL is clean (no token persisted).
+            if "origin" in [r.name for r in repo.remotes]:
+                repo.remotes.origin.set_url(url)
         except Exception as e:
             raise GitOperationError(f"Fetch/checkout failed: {e}") from e
         return target_dir
-    url_with_token = _url_with_token(url, token)
     try:
         Repo.clone_from(
             url_with_token,
@@ -54,6 +60,10 @@ def clone_repo(
             branch=branch_name,
             single_branch=True,
         )
+        # Do not persist token in git config remote URL.
+        repo = Repo(target_dir)
+        if "origin" in [r.name for r in repo.remotes]:
+            repo.remotes.origin.set_url(url)
     except Exception as e:
         raise GitOperationError(f"Clone failed: {e}") from e
     return target_dir
